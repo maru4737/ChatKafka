@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "P8mWwsF/9Qk=",
+  "success": true,
+  "projectFilePath": "C:\\workspace\\Kafka\\ChatKafka\\ChatKafka\\ChatKafka.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\박성호\\.nuget\\packages\\confluent.kafka\\2.12.0\\confluent.kafka.2.12.0.nupkg.sha512",
+    "C:\\Users\\박성호\\.nuget\\packages\\librdkafka.redist\\2.12.0\\librdkafka.redist.2.12.0.nupkg.sha512"
+  ],
+  "logs": []
+}
