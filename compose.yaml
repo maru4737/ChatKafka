@@ -1,0 +1,7 @@
+﻿services:
+  chatkafka:
+    image: chatkafka
+    build:
+      context: .
+      dockerfile: ChatKafka/Dockerfile
+
