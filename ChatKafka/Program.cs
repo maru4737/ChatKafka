@@ -3,15 +3,22 @@ using Confluent.Kafka;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
 
 record ChatMessage(string User, string Text, DateTime Time);
 
 class Program
 {
+    static readonly ConcurrentQueue<string> PrintQueue = new();
+    static readonly object ConsoleLock = new();
+
+    static string InputBuffer = "";
+    static bool Running = true;
+
     static async Task Main()
     {
         Console.Write("이름: ");
-        var myName = Console.ReadLine();
+        var myName = Console.ReadLine() ?? "unknown";
 
         var consumerConfig = new ConsumerConfig
         {
@@ -34,46 +41,109 @@ class Program
 
         consumer.Subscribe("chat.cmd.v1");
 
-        var cts = new CancellationTokenSource();
-
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
-            cts.Cancel();
+            Running = false;
             consumer.Close();
         };
 
-        // Consumer
-        Task.Run(() =>
+        // =========================
+        // Kafka Consumer (수신)
+        // =========================
+        _ = Task.Run(() =>
         {
             try
             {
-                while (!cts.IsCancellationRequested)
+                while (Running)
                 {
-                    var cr = consumer.Consume(cts.Token);
+                    var cr = consumer.Consume();
                     var msg = JsonSerializer.Deserialize<ChatMessage>(cr.Message.Value);
-                    if (msg == null || msg.User == myName) continue;
 
-                    Console.WriteLine($"{msg.User}: {msg.Text}");
+                    if (msg == null || msg.User == myName)
+                        continue;
+
+                    PrintQueue.Enqueue($"{msg.User}: {msg.Text}");
                 }
             }
-            catch (OperationCanceledException) { }
+            catch { }
         });
 
-        // Producer
-        while (!cts.IsCancellationRequested)
+        // =========================
+        // 키 입력 처리
+        // =========================
+        _ = Task.Run(async () =>
         {
-            var input = Console.ReadLine();
-            if (string.IsNullOrWhiteSpace(input)) continue;
+            while (Running)
+            {
+                var key = Console.ReadKey(true);
 
-            var payload = JsonSerializer.Serialize(
-                new ChatMessage(myName, input, DateTime.UtcNow)
-            );
+                lock (ConsoleLock)
+                {
+                    if (key.Key == ConsoleKey.Enter)
+                    {
+                        Console.WriteLine();
 
-            await producer.ProduceAsync(
-                "chat.cmd.v1",
-                new Message<Null, string> { Value = payload }
-            );
+                        var text = InputBuffer;
+                        InputBuffer = "";
+
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            var payload = JsonSerializer.Serialize(
+                                new ChatMessage(myName, text, DateTime.UtcNow)
+                            );
+
+                            producer.Produce(
+                                "chat.cmd.v1",
+                                new Message<Null, string> { Value = payload }
+                            );
+                        }
+
+                        Console.Write("> ");
+                    }
+                    else if (key.Key == ConsoleKey.Backspace)
+                    {
+                        if (InputBuffer.Length > 0)
+                        {
+                            InputBuffer = InputBuffer[..^1];
+                            Console.Write("\b \b");
+                        }
+                    }
+                    else
+                    {
+                        InputBuffer += key.KeyChar;
+                        Console.Write(key.KeyChar);
+                    }
+                }
+
+                await Task.Delay(1);
+            }
+        });
+
+        // =========================
+        // 출력 루프
+        // =========================
+        Console.WriteLine("(Ctrl+C 종료)");
+        Console.Write("> ");
+
+        while (Running)
+        {
+            while (PrintQueue.TryDequeue(out var msg))
+            {
+                lock (ConsoleLock)
+                {
+                    // 현재 입력 줄 제거
+                    Console.Write("\r" + new string(' ', Console.WindowWidth) + "\r");
+
+                    // 메시지 출력
+                    Console.WriteLine(msg);
+
+                    // 입력 복원
+                    Console.Write("> " + InputBuffer);
+                }
+            }
+
+            Thread.Sleep(50);
         }
     }
 }
